@@ -1,0 +1,13 @@
+[package]
+name = "miri-batch"
+version = "0.1.0"
+edition = "2021"
+description = "여러 개의 단일 파일 Rust 프로그램을 Miri 로 일괄 실행하고 판정표를 만든다"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# 외부 crate 를 쓰지 않는다. stable 툴체인에서 `cargo build` 만으로 빌드된다.
+[dependencies]
+
+[profile.release]
+debug = 1
