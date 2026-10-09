@@ -46,7 +46,7 @@ cargo build --release
 
 ## 3. 샘플로 첫 실행
 
-프로젝트에 들어 있는 샘플 9개를 돌려 보자. 디렉터리를 그대로 넘기면 그 안의 `.rs`를 전부 찾는다. 파일당 3초 제한을 걸어 두면 일부러 무한 루프를 도는 샘플이 빨리 끝난다.
+프로젝트에 들어 있는 샘플 9개를 돌려 보자. 디렉터리를 그대로 넘기면 그 안의 `.rs`를 전부 찾는다(같은 파일들의 목록인 `samples/list.txt`를 `--list samples/list.txt`로 줘도 결과는 같다). 파일당 3초 제한을 걸어 두면 일부러 무한 루프를 도는 샘플이 빨리 끝난다.
 
 ```bash
 ./target/release/miri-batch samples -t 3
@@ -159,14 +159,14 @@ rustc 테스트 스위트처럼 `.fixed` 파일(rustfix가 고쳐 쓴 소스)도
 ```bash
 ./target/release/miri-batch some/file.rs                       # 파일 하나
 find /path/to/cases -name '*.rs' | sort > my_list.txt          # 목록 파일 만들기
-./target/release/miri-batch my_list.txt
-./target/release/miri-batch dirA dirB my_list.txt extra.rs     # 섞어서
+./target/release/miri-batch --list my_list.txt                 # 목록은 --list 로 명시
+./target/release/miri-batch dirA dirB extra.rs --list my_list.txt   # 섞어서
 ```
 
 규칙:
 
-- 입력이 디렉터리면 안을 뒤지고, `.rs`(또는 `-e`로 준 확장자) 파일이면 그 파일 하나, 그 밖의 파일이면 경로 목록으로 읽는다.
-- 목록 파일의 상대 경로는 목록 파일이 있는 디렉터리 기준이다. 빈 줄과 `#`으로 시작하는 줄은 무시한다.
+- 위치 인자는 디렉터리 또는 소스 파일(`.rs`, 또는 `-e`로 준 확장자)만 받는다. 그 밖의 파일을 주면 "`--list`로 주세요"라는 오류로 멈춘다. 목록 파일을 소스로 오해하거나 그 반대가 되는 일을 막기 위해서다.
+- 목록 파일은 `--list FILE`로 준다. 여러 번 쓸 수 있다. 상대 경로는 목록 파일이 있는 디렉터리 기준이다. 빈 줄과 `#`으로 시작하는 줄은 무시한다.
 - 같은 파일이 여러 입력에서 겹치면 한 번만 돌린다. 실제로 돌린 목록은 결과의 `files.txt`에 남는다.
 - 없는 파일이 하나라도 있으면 아무것도 실행하지 않고 그 목록을 보여 준다.
 - 각 파일은 `main`이 있어야 한다. 외부 crate를 쓰는 파일은 돌릴 수 없다(cargo 프로젝트가 아니라 파일 하나를 직접 컴파일하기 때문).

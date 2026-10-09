@@ -1,13 +1,14 @@
 //! miri-batch: 여러 개의 단일 파일 Rust 프로그램을 Miri 로 일괄 실행하고 판정표를 만든다.
 //!
 //! 사용법:
-//!     miri-batch INPUT... [-j N] [-t SEC] [-o DIR] [--fixed] [-e EXT] [--toolchain TC] [--sysroot DIR] [-F FLAG]...
+//!     miri-batch [INPUT...] [--list FILE]... [-j N] [-t SEC] [-o DIR] [--fixed] [-e EXT] [--toolchain TC] [--sysroot DIR] [-F FLAG]...
 //!
-//! INPUT 은 셋 중 하나이고 여러 개를 섞어 줄 수 있다.
+//! INPUT 은 디렉터리 또는 소스 파일이고 여러 개를 줄 수 있다.
 //!   - 디렉터리: 하위 디렉터리까지 뒤져 확장자가 맞는 파일(기본 `.rs`)을 전부 모은다. 경로순 정렬.
-//!   - 소스 파일: 그 파일 하나.
-//!   - 목록 파일: 경로가 한 줄에 하나씩 적힌 텍스트 파일. 상대 경로는 목록 파일이 있는 디렉터리 기준.
-//!     빈 줄과 `#` 으로 시작하는 줄은 무시한다.
+//!   - 소스 파일: 그 파일 하나. 확장자가 소스 확장자가 아니면 오류다(목록 파일은 `--list` 로).
+//!
+//! 목록 파일은 `--list FILE` 로 명시한다. 경로가 한 줄에 하나씩 적힌 텍스트 파일이고, 상대 경로는
+//! 목록 파일이 있는 디렉터리 기준이며, 빈 줄과 `#` 으로 시작하는 줄은 무시한다. 여러 번 줄 수 있다.
 //!
 //! 각 소스 파일은 `main` 이 있는 단일 파일 프로그램이어야 한다. `--fixed` 를 주면 `.fixed` 파일
 //! (rustc 테스트 스위트의 rustfix 결과물)도 소스로 취급한다.
@@ -50,12 +51,13 @@ const COMMON_FLAGS: &[&str] = &[
 ];
 
 const USAGE: &str = "\
-사용법: miri-batch INPUT... [옵션]
+사용법: miri-batch [INPUT...] [--list FILE]... [옵션]
 
-  INPUT               디렉터리(하위까지 .rs 전부), 소스 파일 하나, 또는 경로 목록 파일(한 줄에 하나,
-                      빈 줄과 # 주석 무시). 여러 개를 섞어 줄 수 있다.
+  INPUT               디렉터리(하위까지 .rs 전부) 또는 소스 파일 하나. 여러 개 가능
 
 옵션:
+  -l, --list FILE     경로 목록 파일(한 줄에 하나, 빈 줄과 # 주석 무시, 상대 경로는 FILE 기준).
+                      여러 번 쓸 수 있다
   -j, --jobs N        동시에 실행할 파일 수 (기본 1 = 순차)
   -t, --timeout SEC   파일당 제한 시간(초) (기본 300)
   -o, --outdir DIR    결과 디렉터리 (기본 results/<YYYYMMDD-HHMMSS>)
@@ -73,6 +75,7 @@ const USAGE: &str = "\
 
 struct Opts {
     inputs: Vec<PathBuf>,
+    lists: Vec<PathBuf>,
     exts: Vec<String>,
     jobs: usize,
     timeout: Duration,
@@ -85,6 +88,7 @@ struct Opts {
 fn parse_args() -> Result<Opts, String> {
     let mut args = env::args().skip(1);
     let mut inputs = Vec::new();
+    let mut lists = Vec::new();
     let mut exts = vec!["rs".to_string()];
     let mut jobs = 1usize;
     let mut timeout = Duration::from_secs(300);
@@ -126,21 +130,23 @@ fn parse_args() -> Result<Opts, String> {
             "--toolchain" => toolchain = Some(value(&mut args, "--toolchain")?),
             "--sysroot" => sysroot = Some(PathBuf::from(value(&mut args, "--sysroot")?)),
             "-F" | "--flag" => extra_flags.push(value(&mut args, "-F")?),
+            "-l" | "--list" => lists.push(PathBuf::from(value(&mut args, "--list")?)),
             s if s.starts_with('-') && s.len() > 1 => {
                 return Err(format!("알 수 없는 옵션: {s}\n\n{USAGE}"))
             }
             _ => inputs.push(PathBuf::from(a)),
         }
     }
-    if inputs.is_empty() {
+    if inputs.is_empty() && lists.is_empty() {
         return Err(format!(
-            "입력(디렉터리, 소스 파일, 또는 목록 파일)이 필요합니다\n\n{USAGE}"
+            "입력(디렉터리나 소스 파일, 또는 --list 목록 파일)이 필요합니다\n\n{USAGE}"
         ));
     }
     exts.sort();
     exts.dedup();
     Ok(Opts {
         inputs,
+        lists,
         exts,
         jobs,
         timeout,
@@ -340,9 +346,14 @@ fn parse_list(text: &str, base: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// 입력들을 소스 파일 목록으로 바꾼다. 절대 경로로 만들고(드라이버는 결과 디렉터리에서 실행된다)
-/// 같은 파일은 한 번만 넣는다. 없는 파일이 있으면 실행 전에 전부 알려 준다.
-fn collect_inputs(inputs: &[PathBuf], exts: &[String]) -> Result<Vec<PathBuf>, String> {
+/// 입력(디렉터리·소스 파일)과 `--list` 목록 파일을 소스 파일 목록으로 바꾼다. 절대 경로로 만들고
+/// (드라이버는 결과 디렉터리에서 실행된다) 같은 파일은 한 번만 넣는다. 없는 파일이 있으면 실행 전에
+/// 전부 알려 준다. 순서는 INPUT 들을 먼저, 그다음 --list 들이다.
+fn collect_inputs(
+    inputs: &[PathBuf],
+    lists: &[PathBuf],
+    exts: &[String],
+) -> Result<Vec<PathBuf>, String> {
     let cwd = env::current_dir().map_err(|e| format!("현재 디렉터리를 알 수 없습니다: {e}"))?;
     let mut raw: Vec<PathBuf> = Vec::new();
     for input in inputs {
@@ -364,12 +375,29 @@ fn collect_inputs(inputs: &[PathBuf], exts: &[String]) -> Result<Vec<PathBuf>, S
         } else if input.is_file() && has_source_ext(&input, exts) {
             raw.push(input);
         } else if input.is_file() {
-            let text = fs::read_to_string(&input)
-                .map_err(|e| format!("{} 를 읽을 수 없습니다: {e}", input.display()))?;
-            let base = input.parent().unwrap_or(Path::new("."));
-            raw.extend(parse_list(&text, base));
+            return Err(format!(
+                "{} 는 소스 파일(.{})이 아닙니다. 경로 목록 파일이라면 --list {} 로 주세요",
+                input.display(),
+                exts.join("/."),
+                input.display()
+            ));
         } else {
             return Err(format!("입력이 없습니다: {}", input.display()));
+        }
+    }
+    for list in lists {
+        let list = if list.is_absolute() {
+            list.clone()
+        } else {
+            cwd.join(list)
+        };
+        let text = fs::read_to_string(&list)
+            .map_err(|e| format!("목록 파일 {} 를 읽을 수 없습니다: {e}", list.display()))?;
+        let base = list.parent().unwrap_or(Path::new("."));
+        let before = raw.len();
+        raw.extend(parse_list(&text, base));
+        if raw.len() == before {
+            eprintln!("경고: 목록 파일 {} 에 경로가 없습니다", list.display());
         }
     }
 
@@ -722,7 +750,7 @@ fn real_main() -> Result<(), String> {
     let opts = parse_args()?;
     let clock = Clock::detect();
 
-    let files = collect_inputs(&opts.inputs, &opts.exts)?;
+    let files = collect_inputs(&opts.inputs, &opts.lists, &opts.exts)?;
 
     let toolchain = resolve_toolchain(&opts.toolchain)?;
     let bin = miri_binary(&toolchain)?;
@@ -1071,11 +1099,17 @@ mod tests {
         assert_eq!(out.len(), 4);
         assert!(out.iter().any(|p| p.ends_with("a/y.fixed")));
 
-        // collect_inputs: 디렉터리 + 같은 파일을 가리키는 목록 → 중복 제거
+        // collect_inputs: 디렉터리 + 같은 파일을 가리키는 --list 목록 → 중복 제거
         let list = root.join("list.txt");
         fs::write(&list, "top.rs\na/z.rs\n").unwrap();
-        let files = collect_inputs(&[root.clone(), list], &rs).unwrap();
+        let files = collect_inputs(&[root.clone()], &[list.clone()], &rs).unwrap();
         assert_eq!(files.len(), 3);
+        // --list 만 주면 목록의 순서대로
+        let files = collect_inputs(&[], &[list.clone()], &rs).unwrap();
+        assert!(files[0].ends_with("top.rs") && files[1].ends_with("a/z.rs"));
+        // 소스 확장자가 아닌 파일을 INPUT 으로 주면 오류(목록 파일로 오해하지 않는다)
+        let err = collect_inputs(&[list.clone()], &[], &rs).unwrap_err();
+        assert!(err.contains("--list"), "{err}");
         let _ = fs::remove_dir_all(&root);
     }
 
