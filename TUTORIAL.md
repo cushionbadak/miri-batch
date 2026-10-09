@@ -46,10 +46,10 @@ cargo build --release
 
 ## 3. 샘플로 첫 실행
 
-프로젝트에 들어 있는 샘플 9개를 돌려 보자. 파일당 3초 제한을 걸어 두면 일부러 무한 루프를 도는 샘플이 빨리 끝난다.
+프로젝트에 들어 있는 샘플 9개를 돌려 보자. 디렉터리를 그대로 넘기면 그 안의 `.rs`를 전부 찾는다. 파일당 3초 제한을 걸어 두면 일부러 무한 루프를 도는 샘플이 빨리 끝난다.
 
 ```bash
-./target/release/miri-batch samples/list.txt -t 3
+./target/release/miri-batch samples -t 3
 ```
 
 출력:
@@ -139,26 +139,43 @@ Miri 메시지 읽는 법: "무엇이"(`&u8` 값을 만들었는데), "왜 잘�
 2026-10-09T17:05:04.556+09:00	END	#00001	COMPILE_ERROR	exit=1	0.026s	.../samples/compile_err.rs
 ```
 
-## 5. 내 파일 목록 만들기
+## 5. 내 파일 넘기기: 디렉터리, 파일, 목록
 
-목록은 경로가 한 줄에 하나씩 있는 텍스트 파일이다. 디렉터리 안의 `.rs`를 전부 모으려면:
+가장 쉬운 방법은 디렉터리를 그대로 넘기는 것이다. 하위 디렉터리까지 전부 뒤져 `.rs` 파일을 경로순으로 모은다.
 
 ```bash
-find /path/to/cases -name '*.rs' | sort > my_list.txt
+./target/release/miri-batch /path/to/cases
+```
+
+rustc 테스트 스위트처럼 `.fixed` 파일(rustfix가 고쳐 쓴 소스)도 같이 돌리려면 `--fixed`를 붙인다. 다른 확장자는 `-e`로 추가한다.
+
+```bash
+./target/release/miri-batch /path/to/ui-tests --fixed          # .rs 와 .fixed
+./target/release/miri-batch /path/to/ui-tests -e fixed -e rs2  # 확장자 직접 지정
+```
+
+파일 하나만 돌리거나, 고른 파일들의 목록을 쓰고 싶을 때:
+
+```bash
+./target/release/miri-batch some/file.rs                       # 파일 하나
+find /path/to/cases -name '*.rs' | sort > my_list.txt          # 목록 파일 만들기
 ./target/release/miri-batch my_list.txt
+./target/release/miri-batch dirA dirB my_list.txt extra.rs     # 섞어서
 ```
 
 규칙:
 
-- 절대 경로를 권장한다. 상대 경로는 목록 파일이 있는 디렉터리 기준으로 해석한다.
-- 빈 줄과 `#`으로 시작하는 줄은 무시한다.
+- 입력이 디렉터리면 안을 뒤지고, `.rs`(또는 `-e`로 준 확장자) 파일이면 그 파일 하나, 그 밖의 파일이면 경로 목록으로 읽는다.
+- 목록 파일의 상대 경로는 목록 파일이 있는 디렉터리 기준이다. 빈 줄과 `#`으로 시작하는 줄은 무시한다.
+- 같은 파일이 여러 입력에서 겹치면 한 번만 돌린다. 실제로 돌린 목록은 결과의 `files.txt`에 남는다.
 - 없는 파일이 하나라도 있으면 아무것도 실행하지 않고 그 목록을 보여 준다.
 - 각 파일은 `main`이 있어야 한다. 외부 crate를 쓰는 파일은 돌릴 수 없다(cargo 프로젝트가 아니라 파일 하나를 직접 컴파일하기 때문).
+- 파일 이름에 `.`이나 공백, `-`가 있어도 된다(`issue-77.rev1.fixed` 등). rustc는 파일 이름으로 crate 이름을 정하는데 이런 이름에서 실패하므로, 도구가 `--crate-name`을 항상 명시한다.
 
 ## 6. 병렬 실행과 제한 시간
 
 ```bash
-./target/release/miri-batch my_list.txt -j 8 -t 60
+./target/release/miri-batch /path/to/cases -j 8 -t 60
 ```
 
 - `-j 8`: 8개를 동시에 돌린다. Miri는 프로세스당 단일 스레드라 코어 수까지 올려도 된다. 메모리를 많이 쓰는 파일이 섞여 있으면 절반쯤이 안전하다. 끝나는 대로 다음 파일을 집어 가므로 긴 파일이 몰려도 다른 스레드가 놀지 않는다.
@@ -196,7 +213,7 @@ error: unknown unstable option: `no-such`
 | `Miri sysroot 를 얻지 못했습니다` | `cargo +<툴체인> miri setup`을 직접 실행해 메시지를 본다. 보통 miri 미설치이거나 네트워크 문제다 |
 | 전부 `UNSUPPORTED` | 파일들이 Miri가 지원하지 않는 API(네트워크, 일부 syscall)를 쓴다. 그런 파일은 Miri로 검사할 수 없다 |
 | 환경 변수나 파일을 읽는 프로그램이 실패 | Miri는 기본적으로 호스트와 격리된다. `-F -Zmiri-disable-isolation` |
-| 결과가 전부 `COMPILE_ERROR`이고 `couldn't find file` | 목록의 경로가 잘못됐다. 절대 경로로 바꾼다 |
+| `경고: ... 안에 .rs 파일이 없습니다` | 디렉터리에 `.rs`가 없다. `.fixed`를 돌리려면 `--fixed` |
 | 툴체인을 올렸더니 깨짐 | 이 도구는 Miri 드라이버를 직접 호출하는데, Miri 문서는 이를 공식 지원하지 않는다고 적어 두었다. `cargo +<툴체인> miri run`이 되는지 먼저 확인하고, 안 되면 Miri 설치 문제, 되면 이 도구의 호출 방식 문제이니 [DESIGN.md](DESIGN.md)의 2절을 본다 |
 
 ## 9. 작동 원리 (짧게)

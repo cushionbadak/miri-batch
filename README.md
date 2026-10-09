@@ -14,14 +14,25 @@ rustup component add miri --toolchain nightly
 # 2. 빌드 (stable 로 충분)
 cargo build --release
 
-# 3. 샘플 9개 실행
-./target/release/miri-batch samples/list.txt
+# 3. 샘플 9개 실행 (디렉터리를 그대로 입력)
+./target/release/miri-batch samples
 
-# 4. 내 파일 목록으로 실행 (8개 동시, 파일당 60초 제한)
-./target/release/miri-batch my_list.txt -j 8 -t 60
+# 4. 내 디렉터리 전체 (하위 폴더 포함, 8개 동시, 파일당 60초 제한)
+./target/release/miri-batch /path/to/cases -j 8 -t 60
+
+# 5. .fixed 파일도 함께
+./target/release/miri-batch /path/to/ui-tests --fixed
 ```
 
-목록 파일은 `.rs` 경로가 한 줄에 하나씩 있는 텍스트 파일이다. 절대 경로를 권장하고, 상대 경로는 목록 파일이 있는 디렉터리 기준으로 해석한다. 빈 줄과 `#` 주석은 무시한다. 각 파일은 `main`이 있는 단일 파일 프로그램이어야 한다.
+입력은 세 종류이고 여러 개를 섞어 줄 수 있다.
+
+| 입력 | 동작 |
+| --- | --- |
+| 디렉터리 | 하위 디렉터리까지 뒤져 `.rs` 파일을 전부 모은다. 경로순 정렬. `--fixed`를 주면 `.fixed`도, `-e EXT`로 다른 확장자도 추가 |
+| 소스 파일 (`.rs` 등) | 그 파일 하나 |
+| 목록 파일 (그 외) | 경로가 한 줄에 하나씩 있는 텍스트. 상대 경로는 목록 파일이 있는 디렉터리 기준. 빈 줄과 `#` 주석 무시 |
+
+같은 파일이 여러 입력에서 겹치면 한 번만 돌린다. 각 파일은 `main`이 있는 단일 파일 프로그램이어야 한다. 실제로 돌린 파일 목록은 결과 디렉터리의 `files.txt`에 남는다.
 
 ## 실행 설정은 하나다
 
@@ -50,6 +61,7 @@ cargo build --release
 | `logs/NNNN_<파일명>.log` | 그 파일의 전체 출력. 머리말(명령줄, 시작 시각), 본문(줄마다 `[+경과초] out/err`), 꼬리말(종료 시각, 종료 코드, 판정) |
 | `run.log` | 시각순 사건 기록: 배치 시작, 사전 점검, 각 파일의 START/END, 배치 종료 |
 | `flags.txt` | 실제로 쓴 옵션 |
+| `files.txt` | 실제로 돌린 파일의 절대 경로 목록(입력 순서) |
 | `ice/` | 컴파일러 자체가 죽었을 때(ICE) rustc가 남기는 덤프 |
 
 화면에는 진행 상황과 판정별 개수, 그리고 OK도 컴파일 오류도 아닌 파일 목록이 나온다.
@@ -74,10 +86,13 @@ cargo build --release
 ## 옵션
 
 ```
-miri-batch LIST.txt [옵션]
+miri-batch INPUT... [옵션]
+  INPUT               디렉터리, 소스 파일, 또는 경로 목록 파일. 여러 개 가능
   -j, --jobs N        동시에 실행할 파일 수 (기본 1 = 순차)
   -t, --timeout SEC   파일당 제한 시간(초) (기본 300)
   -o, --outdir DIR    결과 디렉터리 (기본 results/<YYYYMMDD-HHMMSS>)
+      --fixed         .fixed 파일도 소스로 취급 (= -e fixed)
+  -e, --ext EXT       소스로 취급할 확장자 추가. 여러 번 가능 (기본 rs)
       --toolchain TC  rustup 툴체인 이름 (기본: MIRI_TOOLCHAIN 환경 변수, 없으면 현재 활성 툴체인)
       --sysroot DIR   Miri sysroot 경로 (기본: cargo miri setup --print-sysroot 의 출력)
   -F, --flag FLAG     Miri 드라이버에 추가로 넘길 옵션. 여러 번 쓸 수 있다

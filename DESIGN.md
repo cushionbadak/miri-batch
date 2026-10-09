@@ -18,6 +18,7 @@
 
 - `--sysroot`를 반드시 넘겨야 한다. `MIRI_SYSROOT` 환경 변수는 이 버전에서 무시된다. 경로는 `cargo miri setup --print-sysroot`로 얻는다.
 - 드라이버는 현재 디렉터리에 아무것도 쓰지 않는다. 예외는 컴파일러가 죽었을 때(ICE) 남기는 `rustc-ice-*.txt`인데 `RUSTC_ICE` 환경 변수로 위치를 지정한다.
+- crate 이름은 항상 `--crate-name`으로 명시한다. rustc는 파일 이름에서 crate 이름을 만드는데 `test.rev1.fixed`나 `with space.rs`처럼 `.`이나 공백이 들어가면 `invalid character in crate name`으로 실패한다(확인함). 영숫자와 `_` 외의 문자는 `_`로 바꾼다.
 - 드라이버는 자식 프로세스를 만들지 않는다(실행 중 `ps --ppid`로 확인). 그래서 타임아웃 시 드라이버 하나만 죽이면 된다.
 - `rustup run` 없이 `rustup which miri`가 준 경로를 직접 실행해도 된다. 바이너리의 rpath가 같은 툴체인의 `lib/`를 가리킨다.
 - Miri README는 드라이버 직접 호출을 "지원하지 않음"이라고 적어 두었다. 툴체인을 올렸을 때 깨질 수 있으므로 실행 시작 시 `fn main() {}` 사전 점검을 두었다.
