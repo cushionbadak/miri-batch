@@ -766,6 +766,12 @@ fn real_main() -> Result<(), String> {
     let ice_dir = outdir.join("ice");
     fs::create_dir_all(&logs_dir).map_err(|e| format!("{} 생성 실패: {e}", logs_dir.display()))?;
     fs::create_dir_all(&ice_dir).map_err(|e| format!("{} 생성 실패: {e}", ice_dir.display()))?;
+    // 드라이버는 ICE 덤프를 위해 자식 프로세스의 cwd 를 `ice_dir` 로 바꾼다(아래 `Driver::run`).
+    // 그래서 상대 경로로 넘긴 소스 파일(특히 preflight 파일)은 `ice_dir` 기준으로 풀려 못 찾는다.
+    // 결과 디렉터리를 절대 경로로 고정해 logs/ice/preflight 경로가 모두 절대 경로가 되게 한다.
+    let ice_dir = fs::canonicalize(&ice_dir).unwrap_or(ice_dir);
+    let outdir = ice_dir.parent().map(|p| p.to_path_buf()).unwrap_or(outdir);
+    let logs_dir = outdir.join("logs");
 
     let mut flags: Vec<String> = COMMON_FLAGS.iter().map(|s| s.to_string()).collect();
     flags.extend(opts.extra_flags.iter().cloned());
